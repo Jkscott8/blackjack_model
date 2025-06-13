@@ -1,5 +1,13 @@
 import random
 import time
+import joblib
+import numpy as np
+import warnings
+warnings.filterwarnings('ignore')
+
+hit_model = joblib.load('blackjack_hit_prob_model.joblib')
+stay_model = joblib.load('blackjack_stay_prob_model.joblib')
+
 
 class Playing_card(object):
     def __init__(self, suit, rank):
@@ -78,19 +86,39 @@ class Player(object):
     def show_hand(self):
         return ', '.join(card.display_card() for card in self.hand)
 
-    def score(self):
+    def score(self, return_soft=False):
         score = sum(card.value() for card in self.hand)
         aces = sum(1 for card in self.hand if card.rank == 'Ace')
+        is_soft = False
         while score > 21 and aces:
             score -= 10
             aces -= 1
-        return score
+        if aces > 0:  # After adjustment, if an Ace still counts as 11, it's soft
+            is_soft = True
+        return (score, is_soft) if return_soft else score
 
 
 def Hit(player, deck):
     player.draw_card(deck)
     time.sleep(1)
     print(f"{player} now has: {player.show_hand()} (Score: {player.score()})")
+
+
+def model_predict(player, dealer, model):
+    # Prepare features exactly like training
+    features = np.array([[player.hand[0].value(),
+                          player.hand[1].value(),
+                          player.score(),
+                          int(player.score(return_soft=True)[1]),  # is_soft
+                          sum(1 for c in player.hand if c.rank == 'Ace'),  # num_aces
+                          dealer.hand[0].value()]])
+
+    outcome_pred = model.predict(features)[0]
+    outcome_proba = model.predict_proba(features)[0]
+
+    outcomes = {1: "Win", 0: "Tie", -1: "Lose"}
+    return outcomes[outcome_pred], outcome_proba.max()
+
 
 
 def Blackjack(all_players):
@@ -129,6 +157,18 @@ def Blackjack(all_players):
                 print(f'{player} has Blackjack!')
                 time.sleep(1)
                 break
+
+            hit_pred, hit_conf = model_predict(player, dealer, hit_model)
+            stay_pred, stay_conf = model_predict(player, dealer, stay_model)
+
+            time.sleep(1)
+            print(f"\nML Predictions:")
+            time.sleep(1)
+            print(f" - If you HIT, predicted outcome: {hit_pred} ({hit_conf * 100:.1f}% confidence)")
+            time.sleep(1)
+            print(f" - If you STAY, predicted outcome: {stay_pred} ({stay_conf * 100:.1f}% confidence)")
+            time.sleep(1)
+
             x = input(f"\n{player} Hit(1) or Stay(2): ")
             if x == "1":
                 Hit(player, deck)
@@ -144,8 +184,15 @@ def Blackjack(all_players):
 
     print(f'\nDealer Has: {dealer.show_hand()} (Score:{dealer.score()})')
     time.sleep(1)
-    while dealer.score() < 17:
-        Hit(dealer, deck)
+    while True:
+        dealer_score, dealer_is_soft = dealer.score(return_soft=True)
+        if dealer_score < 17:
+            Hit(dealer, deck)
+        elif dealer_score == 17 and dealer_is_soft:
+            Hit(dealer, deck)  # Hit if soft 17
+        else:
+            break
+
     if dealer.score() > 21:
         time.sleep(1)
         print(f"{dealer.name} Busts\n")
@@ -159,7 +206,7 @@ def Blackjack(all_players):
             player.win_bet(0)
             print(f"{player.name} Busts, {player.score()} - loses. Chips now: ${player.chips}")
         elif dealer.score() > 21 or player.score() > dealer.score():
-            if player.score() == 21:
+            if player.score() == 21 and len(player.hand) == 2:
                 player.win_bet(2.5)
                 print(f"Blackjack, {player.name} Wins! Chips now: ${player.chips}")
             else:
@@ -197,19 +244,3 @@ def start_game():
             print("Starting New Game...")
 
 start_game()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
